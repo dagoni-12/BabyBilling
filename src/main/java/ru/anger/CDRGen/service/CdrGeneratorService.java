@@ -1,7 +1,6 @@
 package ru.anger.CDRGen.service;
 
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
@@ -15,8 +14,7 @@ import ru.anger.CDRGen.repositories.RecordRepository;
 import java.time.LocalDateTime;
 
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.*;
 
 @Service
 public class CdrGeneratorService {
@@ -40,52 +38,46 @@ public class CdrGeneratorService {
     private final Object generationLock = new Object();
 
     @Async
-    public void generateRecords() {
-        synchronized (generationLock) {
-            List<Subscriber> subscribers = subscriberRepository.findAll();
-            if (subscribers.size() < 2) {
-                throw new IllegalArgumentException("Требуется минимум 2 абонента");
+    public void generateRecords(int min, int max) {
+        List<Subscriber> subscribers = subscriberRepository.findAll();
+        checkAndResetYear();
+
+        int targetCount = min + random.nextInt(max - min + 1);
+        System.out.println(targetCount);
+        int generated = 0;
+
+        while (generated < targetCount && currentStartTime.isBefore(endOfYear)) {
+            System.out.println("-----------------------------------GENERATING NEW RECORDS-----------------------------------");
+
+            LocalDateTime startTime = currentStartTime;
+            int duration = random.nextInt(3600);
+            LocalDateTime endTime = startTime.plusSeconds(duration);
+
+            LocalDateTime midnight = startTime.toLocalDate().plusDays(1).atStartOfDay();
+
+            if (endTime.isAfter(midnight)) {
+                Record record1 = createRandomRecord(subscribers, startTime, midnight);
+                Record record2 = createRandomRecord(subscribers, midnight, endTime);
+                recordRepository.save(record1);
+                recordRepository.save(record2);
+                cdrBuffer.add(record1);
+                checkAndSendCdr();
+                cdrBuffer.add(record2);
+                generated += 2;
+                updateCurrentTime(record2);
+                currentStartTime = record2.getStartTime().plusSeconds(random.nextInt(3000));
+            } else {
+                Record record = createRandomRecord(subscribers, startTime, endTime);
+                recordRepository.save(record);
+                cdrBuffer.add(record);
+                generated += 1;
+                updateCurrentTime(record);
+                currentStartTime = record.getStartTime().plusSeconds(random.nextInt(3000));
             }
             checkAndResetYear();
-
-            int targetCount = 200 + random.nextInt(301); // 200-500
-            int generated = 0;
-
-            while (generated < targetCount && currentStartTime.isBefore(endOfYear)) {
-                System.out.println("-----------------------------------GENERATING NEW RECORDS-----------------------------------");
-                LocalDateTime startTime = currentStartTime;
-                int duration = random.nextInt(3600);
-                LocalDateTime endTime = startTime.plusSeconds(duration);
-
-                LocalDateTime midnight = startTime.toLocalDate().plusDays(1).atStartOfDay();
-
-                if (endTime.isAfter(midnight)) {
-                    Record record1 = createRandomRecord(subscribers, startTime, midnight);
-                    Record record2 = createRandomRecord(subscribers, midnight, endTime);
-                    recordRepository.save(record1);
-                    recordRepository.save(record2);
-                    cdrBuffer.add(record1);
-                    checkAndSendCdr();
-                    cdrBuffer.add(record2);
-                    generated += 2;
-                    updateCurrentTime(record2);
-                    currentStartTime = record2.getStartTime().plusSeconds(random.nextInt(3000));
-                } else {
-                    Record record = createRandomRecord(subscribers, startTime, endTime);
-                    recordRepository.save(record);
-                    cdrBuffer.add(record);
-                    generated += 1;
-                    updateCurrentTime(record);
-                    currentStartTime = record.getStartTime().plusSeconds(random.nextInt(3000));
-                }
-                if (currentStartTime.isAfter(endOfYear)) {
-                    currentStartTime = endOfYear;
-                }
-
-                checkAndSendCdr();
-            }
-            sendRemainingCdrs();
+            checkAndSendCdr();
         }
+        sendRemainingCdrs();
     }
 
     private Record createRandomRecord(List<Subscriber> subscribers, LocalDateTime startTime, LocalDateTime endTime) {
@@ -121,35 +113,6 @@ public class CdrGeneratorService {
         return cdr;
     }
 
-    private void checkAndResetYear() {
-        if (currentStartTime.isAfter(endOfYear)) {
-            currentStartTime = currentStartTime.plusYears(1)
-                    .withMonth(1).withDayOfMonth(1).withHour(0).withMinute(0);
-            endOfYear = currentStartTime.plusYears(1);
-        }
-    }
-
-    private void sendCdr(List<Record> cdr) {
-        CompletableFuture.runAsync(() -> {
-            // Выводим сообщение в терминал
-            System.out.println("Sending this records:");
-
-            // Выводим каждую запись в терминал
-            cdr.forEach(record -> {
-                System.out.printf("ID: %-5d | Type: %-5s | From: %-12s | To: %-12s | Start: %-20s | End: %-20s%n",
-                        record.getId(),
-                        record.getCallType(),
-                        record.getCaller(),
-                        record.getReceiver(),
-                        record.getStartTime(),
-                        record.getEndTime());;
-            });
-
-            // Отправляем CDR в RabbitMQ
-            rabbitTemplate.convertAndSend(queueName, cdr);
-        });
-    }
-
     private void updateCurrentTime(Record record) {
         LocalDateTime lastEndTime = record.getEndTime();
         currentStartTime = lastEndTime.plusSeconds(random.nextInt(3600));
@@ -166,6 +129,45 @@ public class CdrGeneratorService {
         } while (receiver.equals(exclude));
         return receiver;
     }
+
+    private void checkAndResetYear() {
+        if (currentStartTime.isAfter(endOfYear)) {
+            currentStartTime = currentStartTime.plusYears(1)
+                    .withMonth(1).withDayOfMonth(1).withHour(0).withMinute(0);
+            endOfYear = currentStartTime.plusYears(1);
+        }
+    }
+
+    private void sendCdr(List<Record> cdr) {
+//        CompletableFuture.runAsync(() -> {
+//            System.out.println("Sending this records:");
+//
+//            cdr.forEach(record -> {
+//                System.out.printf("ID: %-5d | Type: %-5s | From: %-12s | To: %-12s | Start: %-20s | End: %-20s%n",
+//                        record.getId(),
+//                        record.getCallType(),
+//                        record.getCaller(),
+//                        record.getReceiver(),
+//                        record.getStartTime(),
+//                        record.getEndTime());;
+//            });
+//
+//            // Отправляем CDR в RabbitMQ
+//            //rabbitTemplate.convertAndSend(queueName, cdr);
+//        });
+            System.out.println("Sending this records:");
+
+            cdr.forEach(record -> {
+                System.out.printf("ID: %-5d | Type: %-5s | From: %-12s | To: %-12s | Start: %-20s | End: %-20s%n",
+                        record.getId(),
+                        record.getCallType(),
+                        record.getCaller(),
+                        record.getReceiver(),
+                        record.getStartTime(),
+                        record.getEndTime());;
+            });
+
+            // Отправляем CDR в RabbitMQ
+            //rabbitTemplate.convertAndSend(queueName, cdr);;
+    }
 }
-
-
