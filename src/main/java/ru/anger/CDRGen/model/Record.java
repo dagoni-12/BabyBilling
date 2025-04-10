@@ -6,7 +6,8 @@ import java.io.Serializable;
 import java.time.LocalDateTime;
 
 @Entity
-public class Record implements Serializable{
+@Table(name = "Record")
+public class Record{
     @Id
     @Column(name = "id")
     @GeneratedValue(strategy = GenerationType.IDENTITY)
