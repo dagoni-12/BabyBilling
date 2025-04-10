@@ -3,7 +3,6 @@ package ru.anger.CDRGen.service;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import ru.anger.CDRGen.model.Record;
@@ -14,7 +13,6 @@ import ru.anger.CDRGen.repositories.RecordRepository;
 import java.time.LocalDateTime;
 
 import java.util.*;
-import java.util.concurrent.*;
 
 @Service
 public class CdrGeneratorService {
@@ -30,32 +28,33 @@ public class CdrGeneratorService {
     private String queueName;
 
     private final Random random = new Random();
-    private final Queue<Record> cdrBuffer = new ConcurrentLinkedQueue<>();
+    private final List<Record> cdrBuffer = new ArrayList<>();
 
     private LocalDateTime currentStartTime = LocalDateTime.of(2024, 1, 1, 0, 0);
     private LocalDateTime endOfYear = currentStartTime.plusYears(1);
 
-    private final Object generationLock = new Object();
+    private Map<Subscriber, LocalDateTime> busySubscriber = new HashMap<>();
 
-    @Async
     public void generateRecords(int min, int max) {
         List<Subscriber> subscribers = subscriberRepository.findAll();
         checkAndResetYear();
 
+        //кол-во необходимых записей
         int targetCount = min + random.nextInt(max - min + 1);
-        System.out.println(targetCount);
         int generated = 0;
 
         while (generated < targetCount && currentStartTime.isBefore(endOfYear)) {
             System.out.println("-----------------------------------GENERATING NEW RECORDS-----------------------------------");
 
+            //считаем время для очередной записи
             LocalDateTime startTime = currentStartTime;
             int duration = random.nextInt(3600);
             LocalDateTime endTime = startTime.plusSeconds(duration);
-
             LocalDateTime midnight = startTime.toLocalDate().plusDays(1).atStartOfDay();
 
+            //проверка на ночной звонок: делим на 2 разные записи если два разных звонка
             if (endTime.isAfter(midnight)) {
+                // Можно сделать рефактор чтобы возвращался List<Record> из createRandomRecord, не уверен нужно ли.
                 Record record1 = createRandomRecord(subscribers, startTime, midnight);
                 Record record2 = createRandomRecord(subscribers, midnight, endTime);
                 recordRepository.save(record1);
@@ -74,6 +73,7 @@ public class CdrGeneratorService {
                 updateCurrentTime(record);
                 currentStartTime = record.getStartTime().plusSeconds(random.nextInt(3000));
             }
+            //необходимые чеки
             checkAndResetYear();
             checkAndSendCdr();
         }
@@ -81,16 +81,29 @@ public class CdrGeneratorService {
     }
 
     private Record createRandomRecord(List<Subscriber> subscribers, LocalDateTime startTime, LocalDateTime endTime) {
+        //перед созданием новой записи рефрешим занятых пользователей
+        updateBusySubscribers();
+
+        //случайные неодинаковые незанятые пользователи
         Subscriber caller = getRandomSubscriber(subscribers, null);
         Subscriber receiver = getRandomSubscriber(subscribers, caller);
 
+        //создаем записи
         Record record = new Record();
         record.setCallType(random.nextBoolean() ? "01" : "02");
         record.setCaller(caller.getMsisdn());
         record.setReceiver(receiver.getMsisdn());
         record.setStartTime(startTime);
         record.setEndTime(endTime);
+
+        //добавляем занятых пользователей
+        busySubscriber.put(caller, endTime);
+        busySubscriber.put(receiver, endTime);
         return record;
+    }
+
+    private void updateBusySubscribers() {
+        busySubscriber.entrySet().removeIf(entry -> entry.getValue().isBefore(currentStartTime));
     }
 
     private void checkAndSendCdr() {
@@ -108,7 +121,7 @@ public class CdrGeneratorService {
     private List<Record> createCdr() {
         List<Record> cdr = new ArrayList<>();
         for (int i = 0; i < 10 && !cdrBuffer.isEmpty(); i++) {
-            cdr.add(cdrBuffer.poll());
+            cdr.add(cdrBuffer.remove(cdrBuffer.size() - 1));
         }
         return cdr;
     }
@@ -123,11 +136,11 @@ public class CdrGeneratorService {
     }
 
     private Subscriber getRandomSubscriber(List<Subscriber> subscribers, Subscriber exclude) {
-        Subscriber receiver;
+        Subscriber subscriber;
         do {
-            receiver = subscribers.get(random.nextInt(subscribers.size()));
-        } while (receiver.equals(exclude));
-        return receiver;
+            subscriber = subscribers.get(random.nextInt(subscribers.size()));
+        } while (subscriber.equals(exclude) || busySubscriber.containsKey(subscriber));
+        return subscriber;
     }
 
     private void checkAndResetYear() {
@@ -139,22 +152,6 @@ public class CdrGeneratorService {
     }
 
     private void sendCdr(List<Record> cdr) {
-//        CompletableFuture.runAsync(() -> {
-//            System.out.println("Sending this records:");
-//
-//            cdr.forEach(record -> {
-//                System.out.printf("ID: %-5d | Type: %-5s | From: %-12s | To: %-12s | Start: %-20s | End: %-20s%n",
-//                        record.getId(),
-//                        record.getCallType(),
-//                        record.getCaller(),
-//                        record.getReceiver(),
-//                        record.getStartTime(),
-//                        record.getEndTime());;
-//            });
-//
-//            // Отправляем CDR в RabbitMQ
-//            //rabbitTemplate.convertAndSend(queueName, cdr);
-//        });
             System.out.println("Sending this records:");
 
             cdr.forEach(record -> {
