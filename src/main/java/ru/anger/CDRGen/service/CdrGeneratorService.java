@@ -33,7 +33,7 @@ public class CdrGeneratorService {
     private LocalDateTime currentStartTime = LocalDateTime.of(2024, 1, 1, 0, 0);
     private LocalDateTime endOfYear = currentStartTime.plusYears(1);
 
-    private Map<Subscriber, LocalDateTime> busySubscriber = new HashMap<>();
+    private final Map<Subscriber, LocalDateTime> busySubscriber = new HashMap<>();
 
     public void generateRecords(int min, int max) {
         List<Subscriber> subscribers = subscriberRepository.findAll();
@@ -52,11 +52,18 @@ public class CdrGeneratorService {
             LocalDateTime endTime = startTime.plusSeconds(duration);
             LocalDateTime midnight = startTime.toLocalDate().plusDays(1).atStartOfDay();
 
+            //перед созданием новой записи рефрешим занятых пользователей
+            updateBusySubscribers();
+            //случайные неодинаковые незанятые пользователи
+            Subscriber caller = getRandomSubscriber(subscribers, null);
+            Subscriber receiver = getRandomSubscriber(subscribers, caller);
+            String callType = random.nextBoolean() ? "01" : "02";
+
             //проверка на ночной звонок: делим на 2 разные записи если два разных звонка
+            // Можно сделать рефактор чтобы возвращался List<Record> из createRandomRecord, не уверен нужно ли.
             if (endTime.isAfter(midnight)) {
-                // Можно сделать рефактор чтобы возвращался List<Record> из createRandomRecord, не уверен нужно ли.
-                Record record1 = createRandomRecord(subscribers, startTime, midnight);
-                Record record2 = createRandomRecord(subscribers, midnight, endTime);
+                Record record1 = createRandomRecord(callType, caller, receiver, startTime, midnight);
+                Record record2 = createRandomRecord(callType, caller, receiver, midnight, endTime);
                 recordRepository.save(record1);
                 recordRepository.save(record2);
                 cdrBuffer.add(record1);
@@ -66,7 +73,7 @@ public class CdrGeneratorService {
                 updateCurrentTime(record2);
                 currentStartTime = record2.getStartTime().plusSeconds(random.nextInt(3000));
             } else {
-                Record record = createRandomRecord(subscribers, startTime, endTime);
+                Record record = createRandomRecord(callType, caller, receiver, startTime, endTime);
                 recordRepository.save(record);
                 cdrBuffer.add(record);
                 generated += 1;
@@ -77,20 +84,13 @@ public class CdrGeneratorService {
             checkAndResetYear();
             checkAndSendCdr();
         }
-        sendRemainingCdrs();
     }
 
-    private Record createRandomRecord(List<Subscriber> subscribers, LocalDateTime startTime, LocalDateTime endTime) {
-        //перед созданием новой записи рефрешим занятых пользователей
-        updateBusySubscribers();
-
-        //случайные неодинаковые незанятые пользователи
-        Subscriber caller = getRandomSubscriber(subscribers, null);
-        Subscriber receiver = getRandomSubscriber(subscribers, caller);
-
+    private Record createRandomRecord(String callType, Subscriber caller, Subscriber receiver,
+                                      LocalDateTime startTime, LocalDateTime endTime) {
         //создаем записи
         Record record = new Record();
-        record.setCallType(random.nextBoolean() ? "01" : "02");
+        record.setCallType(callType);
         record.setCaller(caller.getMsisdn());
         record.setReceiver(receiver.getMsisdn());
         record.setStartTime(startTime);
@@ -108,12 +108,6 @@ public class CdrGeneratorService {
 
     private void checkAndSendCdr() {
         if (cdrBuffer.size() >= 10) {
-            sendCdr(createCdr());
-        }
-    }
-
-    private void sendRemainingCdrs() {
-        if (!cdrBuffer.isEmpty()) {
             sendCdr(createCdr());
         }
     }
@@ -161,7 +155,7 @@ public class CdrGeneratorService {
                         record.getCaller(),
                         record.getReceiver(),
                         record.getStartTime(),
-                        record.getEndTime());;
+                        record.getEndTime());
             });
 
             // Отправляем CDR в RabbitMQ
