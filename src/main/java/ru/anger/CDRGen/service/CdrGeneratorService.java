@@ -59,31 +59,33 @@ public class CdrGeneratorService {
             Subscriber receiver = getRandomSubscriber(subscribers, caller);
             String callType = random.nextBoolean() ? "01" : "02";
 
+            //добавляем занятых пользователей
+            busySubscriber.put(caller, endTime);
+            busySubscriber.put(receiver, endTime);
+
             //проверка на ночной звонок: делим на 2 разные записи если два разных звонка
-            // Можно сделать рефактор чтобы возвращался List<Record> из createRandomRecord, не уверен нужно ли.
+            List<Record> createdRecords = new ArrayList<>();
             if (endTime.isAfter(midnight)) {
-                Record record1 = createRandomRecord(callType, caller, receiver, startTime, midnight);
-                Record record2 = createRandomRecord(callType, caller, receiver, midnight, endTime);
-                recordRepository.save(record1);
-                recordRepository.save(record2);
-                cdrBuffer.add(record1);
-                checkAndSendCdr();
-                cdrBuffer.add(record2);
+                createdRecords.add(createRandomRecord(callType, caller, receiver, startTime, midnight));
+                createdRecords.add(createRandomRecord(callType, caller, receiver, midnight, endTime));
                 generated += 2;
-                updateCurrentTime(record2);
-                currentStartTime = record2.getStartTime().plusSeconds(random.nextInt(3000));
             } else {
-                Record record = createRandomRecord(callType, caller, receiver, startTime, endTime);
-                recordRepository.save(record);
-                cdrBuffer.add(record);
+                createdRecords.add(createRandomRecord(callType, caller, receiver, startTime, endTime));
                 generated += 1;
-                updateCurrentTime(record);
-                currentStartTime = record.getStartTime().plusSeconds(random.nextInt(3000));
             }
-            //необходимые чеки
-            checkAndResetYear();
-            checkAndSendCdr();
+            postCreateInit(createdRecords);
         }
+    }
+
+    private void postCreateInit(List<Record> createdRecords) {
+        for (Record createdRecord : createdRecords) {
+            recordRepository.save(createdRecord);
+            cdrBuffer.add(createdRecord);
+            checkAndSendCdr();
+            updateCurrentTime(createdRecord);
+        }
+        checkAndResetYear();
+        checkAndSendCdr();
     }
 
     private Record createRandomRecord(String callType, Subscriber caller, Subscriber receiver,
@@ -96,9 +98,6 @@ public class CdrGeneratorService {
         record.setStartTime(startTime);
         record.setEndTime(endTime);
 
-        //добавляем занятых пользователей
-        busySubscriber.put(caller, endTime);
-        busySubscriber.put(receiver, endTime);
         return record;
     }
 
@@ -121,8 +120,8 @@ public class CdrGeneratorService {
     }
 
     private void updateCurrentTime(Record record) {
-        LocalDateTime lastEndTime = record.getEndTime();
-        currentStartTime = lastEndTime.plusSeconds(random.nextInt(3600));
+        LocalDateTime lastEndTime = record.getStartTime();
+        currentStartTime = lastEndTime.plusSeconds(random.nextInt(3000));
 
         if (currentStartTime.isAfter(endOfYear)) {
             currentStartTime = endOfYear;

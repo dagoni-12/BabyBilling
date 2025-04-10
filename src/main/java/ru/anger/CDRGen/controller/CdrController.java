@@ -6,6 +6,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import ru.anger.CDRGen.service.CdrGeneratorService;
+import ru.anger.CDRGen.service.CdrService;
 
 import java.util.Random;
 
@@ -14,6 +15,9 @@ public class CdrController {
 
     @Autowired
     private CdrGeneratorService cdrGeneratorService;
+
+    @Autowired
+    private CdrService cdrService;
 
     Random random = new Random();
 
@@ -28,5 +32,11 @@ public class CdrController {
     public ResponseEntity<String> generateCdrRecordsRandomAmount() {
         cdrGeneratorService.generateRecords(0, random.nextInt(2000));
         return ResponseEntity.ok("CDR records generated successfully.");
+    }
+
+    @PostMapping("/deleteCdr")
+    public ResponseEntity<String> deleteCdrTable() {
+        cdrService.deleteCdrTable();
+        return ResponseEntity.ok("CDR table truncated");
     }
 }
