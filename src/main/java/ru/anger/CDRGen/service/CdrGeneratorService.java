@@ -5,8 +5,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import ru.anger.CDRGen.model.Record;
-import ru.anger.CDRGen.model.Subscriber;
+import ru.anger.CDRGen.entity.Record;
+import ru.anger.CDRGen.entity.Subscriber;
 import ru.anger.CDRGen.repositories.SubscribersRepository;
 import ru.anger.CDRGen.repositories.RecordRepository;
 
@@ -23,19 +23,18 @@ public class CdrGeneratorService {
     private RecordRepository recordRepository;
 
     @Autowired
-    private RabbitTemplate rabbitTemplate = new RabbitTemplate();
-    @Value("${queue.name}")
-    private String queueName;
+    CdrSender cdrSender;
 
     private final Random random = new Random();
     private final List<Record> cdrBuffer = new ArrayList<>();
 
-    private LocalDateTime currentStartTime = LocalDateTime.of(2024, 1, 1, 0, 0);
-    private LocalDateTime endOfYear = currentStartTime.plusYears(1);
+    private static LocalDateTime currentStartTime = LocalDateTime.of(2024, 1, 1, 0, 0);
+    private static LocalDateTime endOfYear = currentStartTime.plusYears(1);
 
     private final Map<Subscriber, LocalDateTime> busySubscriber = new HashMap<>();
 
     public void generateRecords(int min, int max) {
+        System.out.println(max);
         List<Subscriber> subscribers = subscriberRepository.findAll();
         checkAndResetYear();
 
@@ -85,7 +84,6 @@ public class CdrGeneratorService {
             updateCurrentTime(createdRecord);
         }
         checkAndResetYear();
-        checkAndSendCdr();
     }
 
     private Record createRandomRecord(String callType, Subscriber caller, Subscriber receiver,
@@ -116,6 +114,7 @@ public class CdrGeneratorService {
         for (int i = 0; i < 10 && !cdrBuffer.isEmpty(); i++) {
             cdr.add(cdrBuffer.remove(cdrBuffer.size() - 1));
         }
+
         return cdr;
     }
 
@@ -145,19 +144,6 @@ public class CdrGeneratorService {
     }
 
     private void sendCdr(List<Record> cdr) {
-            System.out.println("Sending this records:");
-
-            cdr.forEach(record -> {
-                System.out.printf("ID: %-5d | Type: %-5s | From: %-12s | To: %-12s | Start: %-20s | End: %-20s%n",
-                        record.getId(),
-                        record.getCallType(),
-                        record.getCaller(),
-                        record.getReceiver(),
-                        record.getStartTime(),
-                        record.getEndTime());
-            });
-
-            // Отправляем CDR в RabbitMQ
-            //rabbitTemplate.convertAndSend(queueName, cdr);;
+            cdrSender.send(cdr);
     }
 }

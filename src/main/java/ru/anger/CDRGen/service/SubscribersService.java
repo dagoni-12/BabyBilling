@@ -2,8 +2,7 @@ package ru.anger.CDRGen.service;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import ru.anger.CDRGen.model.Subscriber;
-import ru.anger.CDRGen.repositories.RecordRepository;
+import ru.anger.CDRGen.entity.Subscriber;
 import ru.anger.CDRGen.repositories.SubscribersRepository;
 
 @Service

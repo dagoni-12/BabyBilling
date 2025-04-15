@@ -1,22 +1,19 @@
-package ru.anger.CDRGen.model;
+package ru.anger.CDRGen.entity;
 
 import jakarta.persistence.*;
-
-import java.time.LocalDate;
 
 @Entity
 @Table(name = "Subscriber")
 public class Subscriber {
 
     @Id
-    @Column(name = "id")
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private int id;
 
-    @Column(name = "msisdn")
     private String msisdn;
 
-    Subscriber() {}
+    public Subscriber() {
+    }
 
     public Subscriber(String msisdn) {
         this.msisdn = msisdn;

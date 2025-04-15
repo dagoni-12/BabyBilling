@@ -19,5 +19,8 @@ public class BabyBillingApplication {
 
     public static void main(String[] args) {
         //System.out.println(org.hibernate.Version.getVersionString());
-        SpringApplication.run(BabyBillingApplication.class, args); }
+        SpringApplication.run(BabyBillingApplication.class, args);
+        System.out.println(org.hibernate.Version.getVersionString());
+        //SpringApplication.run(BRTApplication.class, args);
+    }
 }
